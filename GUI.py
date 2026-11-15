@@ -1,5 +1,5 @@
 # GUI.py
-# ver 1.0.2
+# ver 1.0.3
 
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox
@@ -25,10 +25,11 @@ GUI 프로그램에서 blocking이 왜 치명적인가
 """
 
 def set_buttons_state(button_state): # 적용할 상태(tk.NORMAL: 활성화, tk.DISABLED: 비활성화)를 전달받는 함수 / 병합 작업과 관련된 버튼들의 상태를 함께 변경
-    # 튜플 선언과 동시에 바로 사용하는 구조로 버튼을 하나씩 button 변수로 받아 순회
-    # 병합 시작, 파일 추가, 선택 삭제, 위로 이동, 아래로 이동 버튼
-    for button in (start_merge_button, select_button, delete_button, up_button, down_button):
-        button.config(state=button_state) # 현재 버튼의 state 옵션을 전달받은 button_state 값으로 변경
+    start_merge_button.config(state=button_state) # 병합 시작 버튼 상태 변경
+    select_button.config(state=button_state) # 파일 추가 버튼 상태 변경
+    delete_button.config(state=button_state) # 선택 파일 삭제 버튼 상태 변경
+    up_button.config(state=button_state) # 위로 이동 버튼 상태 변경
+    down_button.config(state=button_state) # 아래로 이동 버튼 상태 변경
 
 
 def process_queue(): 
@@ -236,15 +237,7 @@ def start_merge_thread(): # 메인 병합 함수
     elif len(selected_files) < 2: # 2개 미만이면 병합할 의미가 없으므로 오류와 함께 종료
         messagebox.showerror("오류", "병합하려면 최소 2개 이상의 파일을 선택해야 합니다.")
         return
-    
-    # 변경 시작: 병합 대상 목록 고정 제거
-    # 튜플 복사본을 만들던 코드를 제거하고 selected_files를 그대로 사용
-    # 변경 끝: 병합 대상 목록 고정 제거
 
-    """
-        asksaveasfilename() 메서드는 파일을 저장할 수 있는 대화 상자를 엽니다. 이 메서드는 사용자가 지정한 파일 이름을 반환함
-        만약 취소 버튼을 누르면 빈 문자열을 반환합니다. 이 메서드를 사용하면 사용자가 원하는 파일 이름으로 쉽게 저장할 수 있음
-    """
     output_path = filedialog.asksaveasfilename(
         defaultextension=".xlsx",
         filetypes=[("Excel 통합 문서", "*.xlsx")],
@@ -340,7 +333,7 @@ def GUI():
     # --- 플레이스홀더 추가 시작 ---
     listbox_placeholder = tk.Label(
         file_listbox, # 리스트박스 내부에 배치
-        text="비밀번호가 걸린 파일은 병합이 정상적으로 진행되지 않습니다\n비밀번호가 걸려있는 경우 비밀번호를 해제한 후 병합을 진행해 주세요\n(마우스로 끌어서 놓기 미지원)",
+        text="비밀번호가 걸린 파일은 병합이 정상적으로 진행되지 않습니다\n비밀번호를 해제한 후 병합을 진행해 주세요\n(목록 클릭 → Ctrl+A로 전체 선택 → Delete로 목록에서 삭제 가능)",
         font=default_font, # 목록이 비었을 때 표시하는 안내문에 공통 글꼴 적용
         fg="gray",
         bg="white"
