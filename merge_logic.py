@@ -1,5 +1,5 @@
 # merge_logic.py 
-# ver 1.0.2
+# ver 1.0.3
 
 import openpyxl
 from openpyxl.utils.cell import get_column_letter # 열 번호(1,2,3...)를 엑셀 열 문자('A','B',...)로 변환하는 함수를 가져옵니다
@@ -11,6 +11,27 @@ import errno # 디스크 공간 부족 오류 코드(ENOSPC)를 확인
 import zipfile # 엑셀 파일을 정상적인 ZIP 구조로 읽을 수 없을 때 발생하는 예외 처리
 import gc # 가바지 컬렉션을 수동으로 조작하여 메모리 누수 방지를 위해 사용(동일 파일 병합 기준 547MB -> 520MB로 감소함)
 
+# 추가 시작: 선택한 원본 파일 확인
+def is_source_file(output_path, selected_files):
+    # 원본이 이동되거나 삭제되었어도 선택했던 동일 경로에는 저장하지 않음
+    normalized_output_path = os.path.abspath(output_path)
+    if any(normalized_output_path == os.path.abspath(path) for path in selected_files):
+        return True
+
+    # 새로 저장할 파일이 아직 없으면 덮어쓸 대상도 없음
+    try:
+        os.stat(output_path)
+    except FileNotFoundError:
+        return False
+
+    # 대소문자나 링크로 경로가 달라도 실제로 같은 원본 파일이면 차단
+    return any(
+        os.path.samefile(output_path, input_path)
+        for input_path in selected_files
+    )
+# 추가 끝: 선택한 원본 파일 확인
+
+
 def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필요한 변수들 GUI.py로부터 받음
     gc.disable() # 메모리 사용량 최적화를 위한 자동 가비지 컬렉션 비활성화 (메모리 수거 시점 최적화 목적)
 
@@ -21,6 +42,9 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
     is_saving = False # 원본 파일을 읽는 중인지 결과를 저장하는 중인지 구분
     
     try:
+        # 변경 시작: 병합 함수 내부의 목록 고정 제거
+        # 전달받은 selected_files를 튜플로 변환하지 않고 그대로 사용
+        # 변경 끝: 병합 함수 내부의 목록 고정 제거
         new_wb = openpyxl.Workbook() # Workbook 클래스로부터 객체를 하나 생성(새 엑셀 파일을 여는 것)
         new_wb.remove(new_wb.active) # 자동 생성된 기본 시트를 삭제
         target_sheets = {} # key: sheet_key(비교용 키) / value: 해당 키에 연결된 결과 시트 객체
@@ -56,9 +80,28 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
                         target_sheet = target_sheets[sheet_key]
                     start_row = sheet_next_row[sheet_key] # 이번 원본 시트의 데이터를 결과 시트의 몇 행부터 붙일지 가져옴
 
+                    # 추가 시작: 시트별 기본 행 높이 확인
+                    source_default_height = current_sheet.sheet_format.defaultRowHeight
+                    target_default_height = target_sheet.sheet_format.defaultRowHeight
+                    # 추가 끝: 시트별 기본 행 높이 확인
+
                     # row는 해당 행 한 줄의 모든 셀들의 정보(병합 상태, 현재 시트, 위치)를 저장
                     for r_idx, row in enumerate(current_sheet.iter_rows(), start=1): # openpyxl 라이브러리의 iter_rows 함수는 엑셀 시트의 행을 순회하며 데이터에 접근할 수 있게 함
                         target_r_idx = start_row + r_idx - 1
+
+                        # 추가 시작: 원본 행 높이 보존
+                        row_dimension = current_sheet.row_dimensions.get(r_idx)
+                        row_height = row_dimension.height if row_dimension is not None else None
+
+                        if row_height is not None:
+                            # 원본 행에 따로 지정된 높이가 있으면 그대로 적용
+                            target_sheet.row_dimensions[target_r_idx].height = row_height
+
+                        elif source_default_height != target_default_height:
+                            # 따로 지정된 높이가 없고 기본 높이가 다르면 원본 기본 높이를 적용
+                            target_sheet.row_dimensions[target_r_idx].height = source_default_height
+                        # 추가 끝: 원본 행 높이 보존
+
                         for c_idx, cell in enumerate(row, start=1): # cell = A1 B1 같은 셀 위치(?)
                             # 값과 서식이 모두 없는 셀은 생성하지 않아 결과 시트의 메모리 사용량을 줄임
                             # 서식이 있는 빈칸은 유지하며, 건너뛰어도 원본 행·열 위치는 바뀌지 않음
@@ -94,7 +137,7 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
 
                     대신 “이 구간은 병합됐다”는 별도의 병합 정보가 따로 기록됩니다
                     """
-                    gui_queue.put(('log', f"    - 병합된 셀 정보 복사 중..."))
+                    gui_queue.put(('log', "    - 병합된 셀 정보 복사 중..."))
                     for merged_range in current_sheet.merged_cells.ranges: # merged_range는 A1:D1 같은 병합된 범위를 나타내는 객체                            
                         # 행 위치를 현재 데이터를 붙여넣는 위치에 맞게 조정합니다
                         # 엑셀 행 번호: 1, 2, 3, ... → 1부터 시작
@@ -128,6 +171,17 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
                     del load_file_wb
                     gc.collect() # 파일 하나가 끝날 때마다 수동으로 GC 호출(메모리 누수 방지)
 
+        # 추가 시작: 저장 직전 원본 파일 보호
+        if is_source_file(output_path, selected_files):
+            user_msg = (
+                "병합 예정인 파일은 덮어쓸 수 없습니다.\n\n"
+                "병합된 파일은 다른 이름이나 다른 폴더에 저장해 주세요."
+            )
+            gui_queue.put(('log', f"\n오류 발생: {user_msg.replace('\n\n', ' ')}"))
+            gui_queue.put(('show_error', ("덮어쓰기 오류", user_msg)))
+            return
+        # 추가 끝: 저장 직전 원본 파일 보호
+
         is_saving = True
         new_wb.save(output_path)
         gui_queue.put(('log', "\n" + "="*50))
@@ -150,8 +204,8 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
         gui_queue.put(('log', f"\n오류 발생: {user_msg.replace('\n\n', ' ')}"))
         gui_queue.put(('show_error', (title, user_msg)))
 
-    except InvalidFileException: # 사용자가 엑셀 파일이 아닌 것을 선택했거나 파일이 손상된 경우
-        user_msg = "엑셀 파일 형식이 아니거나 손상된 파일이 포함되어 있습니다.\n\n선택한 파일 목록을 확인해주세요."
+    except InvalidFileException: # openpyxl이 지원하지 않는 확장자의 파일을 읽으려는 경우
+        user_msg = "지원하지 않는 파일 형식이 포함되어 있습니다.\n\n.xlsx 형식의 엑셀 파일을 선택해주세요."
         gui_queue.put(('log', f"\n오류 발생: {user_msg.replace('\n\n', ' ')}"))
         gui_queue.put(('show_error', ("파일 형식 오류", user_msg)))
 
@@ -180,7 +234,7 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
             gui_queue.put(('show_error', ("디스크 공간 부족", user_msg)))
         else: # 공간 부족이 아닌 운영체제 오류는 기존 일반 오류 안내를 유지
             user_msg = "알 수 없는 오류가 발생하여 작업을 완료할 수 없습니다.\n\n프로그램을 다시 시작하거나 파일에 문제가 없는지 확인해주세요."
-            gui_queue.put(('log', f"\n오류 발생: 예상치 못한 문제가 발생했습니다."))
+            gui_queue.put(('log', "\n오류 발생: 예상치 못한 문제가 발생했습니다."))
             gui_queue.put(('show_error', ("오류 발생", user_msg)))
 
     except MemoryError: # 파일 읽기·병합·저장 중 발생한 메모리 부족을 별도로 안내
@@ -193,7 +247,7 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
 
     except Exception: # 'as e'를 사용하지 않아 예외 객체의 민감한 내용 노출을 원천 차단
         user_msg = "알 수 없는 오류가 발생하여 작업을 완료할 수 없습니다.\n\n프로그램을 다시 시작하거나 파일에 문제가 없는지 확인해주세요."
-        gui_queue.put(('log', f"\n오류 발생: 예상치 못한 문제가 발생했습니다."))
+        gui_queue.put(('log', "\n오류 발생: 예상치 못한 문제가 발생했습니다."))
         gui_queue.put(('show_error', ("오류 발생", user_msg)))
 
     finally: 
