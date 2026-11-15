@@ -1,4 +1,5 @@
 # GUI.py
+# ver 1.0.2
 
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox
@@ -23,6 +24,13 @@ GUI 프로그램에서 blocking이 왜 치명적인가
 결과: 창이 얼어붙음 (응답 없음)
 """
 
+def set_buttons_state(button_state): # 적용할 상태(tk.NORMAL: 활성화, tk.DISABLED: 비활성화)를 전달받는 함수 / 병합 작업과 관련된 버튼들의 상태를 함께 변경
+    # 튜플 선언과 동시에 바로 사용하는 구조로 버튼을 하나씩 button 변수로 받아 순회
+    # 병합 시작, 파일 추가, 선택 삭제, 위로 이동, 아래로 이동 버튼
+    for button in (start_merge_button, select_button, delete_button, up_button, down_button):
+        button.config(state=button_state) # 현재 버튼의 state 옵션을 전달받은 button_state 값으로 변경
+
+
 def process_queue(): 
     # 큐에 있는 모든 메시지를 처리하여 GUI를 안전하게 업데이트
     try:
@@ -37,8 +45,7 @@ def process_queue():
                 >>> 없으면 기다리지 말고
                 >>> 대신 예외를 던져라”
             """
-            message = gui_queue.get_nowait() # 블로킹을 방지하기 위해서는 get_nowait 함수를 사용하면 됨 / 블로킹 없이 메시지를 가져옴
-            command, data = message
+            command, data = gui_queue.get_nowait() # 블로킹을 방지하기 위해서는 get_nowait 함수를 사용하면 됨 / 블로킹 없이 메시지를 가져옴
 
             if command == 'log':
                 log_message(data)
@@ -49,11 +56,7 @@ def process_queue():
                 title, msg = data
                 messagebox.showinfo(title, msg)
             elif command == 'task_done':
-                merge_button.config(state=tk.NORMAL)
-                select_button.config(state=tk.NORMAL)
-                delete_button.config(state=tk.NORMAL)
-                up_button.config(state=tk.NORMAL)
-                down_button.config(state=tk.NORMAL)
+                set_buttons_state(tk.NORMAL)
 
     except queue.Empty: # 큐가 비어있으면 get_nowait()이 이 예외를 발생시킴 / 처리할 메시지가 더 이상 없다는 의미이므로 루프 종료
         pass
@@ -74,8 +77,6 @@ def process_queue():
         root.after(100, process_queue) # 모든 메시지를 처리한 후, 100ms 뒤에 다시 큐를 확인할 것을 예약합니다.
 
 def select_files(): # 파일 선택 대화상자를 열고(askopenfilenames 함수) 선택된 파일들을 리스트박스에 표시
-    global selected_files
-    
     files = filedialog.askopenfilenames( # 여러 파일을 선택할 수 있는 파일 선택 대화상자 열기(튜플로 반환)
         title="병합할 엑셀 파일을 선택하세요",
         filetypes=[("Excel 파일", "*.xlsx")] # openpyxl 라이브러리는 엑셀 구버전인 xls 파일과 호환되지 않음
@@ -94,7 +95,7 @@ def select_files(): # 파일 선택 대화상자를 열고(askopenfilenames 함�
                     messagebox.showwarning(
                         "선택 개수 초과",
                         f"파일은 최대 {MAX_FILES}개까지만 선택할 수 있습니다.\n\n"
-                        f"일부 파일은 추가되지 않았습니다."
+                        "일부 파일은 추가되지 않았습니다."
                     )
                     break 
         
@@ -104,28 +105,43 @@ def select_files(): # 파일 선택 대화상자를 열고(askopenfilenames 함�
 
             update_file_listbox()
 
-def delete_selected_file(event=None): # 리스트박스에서 선택된 파일을 목록에서 삭제
-    global selected_files
+# 추가 시작: Ctrl+A로 파일 목록 전체 선택
+def select_all_files(event=None):
+    file_listbox.selection_set(0, tk.END)
+    return "break" # Tk 기본 키 동작이 전체 선택을 바꾸지 않도록 처리 종료
+# 추가 끝: Ctrl+A로 파일 목록 전체 선택
+
+
+def delete_selected_file(event=None): # 리스트박스에서 선택된 파일들을 목록에서 삭제
+    # 변경 시작: 병합 중 Delete 키 삭제 차단
+    if merge_thread is not None and merge_thread.is_alive():
+        return "break" # 병합 중에는 Delete 키의 삭제 처리와 후속 이벤트 전달을 중단
+    # 변경 끝: 병합 중 Delete 키 삭제 차단
+
     selection_indices = file_listbox.curselection() # curselection()은 선택된 항목의 인덱스를 튜플 형태로 반환 (예: (2,))
     
     if not selection_indices:
         messagebox.showwarning("알림", "삭제할 파일을 목록에서 선택해주세요.")
         return
         
-    selected_index = selection_indices[0]
-    
-    deleted_file_path = selected_files.pop(selected_index)
-    file_name = os.path.basename(deleted_file_path)
-    
-    log_message(f"'{file_name}' 파일이 목록에서 삭제되었습니다.")
+    # 변경 시작: 선택한 파일들을 모두 삭제
+    for selected_index in reversed(selection_indices): # 뒤에서부터 삭제해 앞쪽 인덱스가 밀리지 않도록 함
+        deleted_file_path = selected_files.pop(selected_index)
+        file_name = os.path.basename(deleted_file_path)
+        log_message(f"'{file_name}' 파일이 목록에서 삭제되었습니다.")
     update_file_listbox()
+    return "break"
+    # 변경 끝: 선택한 파일들을 모두 삭제
 
 def move_file_up(): # 선택한 파일을 목록에서 한 칸 위로 이동
-    global selected_files
     selection_indices = file_listbox.curselection() # curselection()은 선택된 항목의 인덱스를 튜플 형태로 반환 (예: (2,))
 
     if not selection_indices:
         messagebox.showwarning("알림", "순서를 변경할 파일을 목록에서 선택해주세요.")
+        return
+
+    if len(selection_indices) > 1: # 여러 파일 중 첫 항목만 이동하는 혼동을 방지
+        messagebox.showwarning("알림", "순서를 변경할 파일을 하나만 선택해 주세요.")
         return
         
     selected_index = selection_indices[0]
@@ -140,11 +156,14 @@ def move_file_up(): # 선택한 파일을 목록에서 한 칸 위로 이동
         update_file_listbox(select_index=new_index)
 
 def move_file_down(): # 선택한 파일을 목록에서 한 칸 아래로 이동
-    global selected_files
     selection_indices = file_listbox.curselection() # curselection()은 선택된 항목의 인덱스를 튜플 형태로 반환 (예: (2,))
 
     if not selection_indices:
         messagebox.showwarning("알림", "순서를 변경할 파일을 목록에서 선택해주세요.")
+        return
+
+    if len(selection_indices) > 1: # 여러 파일 중 첫 항목만 이동하는 혼동을 방지
+        messagebox.showwarning("알림", "순서를 변경할 파일을 하나만 선택해 주세요.")
         return
         
     selected_index = selection_indices[0]
@@ -218,6 +237,10 @@ def start_merge_thread(): # 메인 병합 함수
         messagebox.showerror("오류", "병합하려면 최소 2개 이상의 파일을 선택해야 합니다.")
         return
     
+    # 변경 시작: 병합 대상 목록 고정 제거
+    # 튜플 복사본을 만들던 코드를 제거하고 selected_files를 그대로 사용
+    # 변경 끝: 병합 대상 목록 고정 제거
+
     """
         asksaveasfilename() 메서드는 파일을 저장할 수 있는 대화 상자를 엽니다. 이 메서드는 사용자가 지정한 파일 이름을 반환함
         만약 취소 버튼을 누르면 빈 문자열을 반환합니다. 이 메서드를 사용하면 사용자가 원하는 파일 이름으로 쉽게 저장할 수 있음
@@ -233,68 +256,92 @@ def start_merge_thread(): # 메인 병합 함수
         log_message("저장이 취소되었습니다.")
         return
 
-    # <<<--- 수정된 부분 시작: 원본 파일 덮어쓰기 방지 기능 추가 --->>>
-    normalized_output_path = os.path.normpath(output_path) # os.path.normpath를 사용하여 경로 구분자( / 또는 \ )를 통일시켜 정확하게 비교(경로 정규화)
-    normalized_input_paths = [os.path.normpath(f) for f in selected_files]
+    # 수정 시작: 선택한 원본 파일 덮어쓰기 방지
+    try:
+        # 변경 시작: 원본 검사에 기존 파일 목록 전달
+        source_overwrite = merge_logic.is_source_file(output_path, selected_files)
+        # 변경 끝: 원본 검사에 기존 파일 목록 전달
+    except OSError:
+        log_message("오류: 원본 파일 또는 저장 대상 파일을 확인할 수 없습니다.")
+        messagebox.showerror(
+            "파일 확인 오류",
+            "원본 파일 또는 저장 대상 파일을 확인할 수 없습니다.\n\n"
+            "파일이 이동되거나 삭제되었는지, 접근 권한에 문제가 없는지 확인해 주세요.",
+            parent=root,
+        )
+        return
 
-    if normalized_output_path in normalized_input_paths:
-        log_message("오류: 저장하려는 파일 이름이 선택된 파일 중 하나와 동일합니다.")
+    if source_overwrite:
+        log_message("오류: 선택한 원본 파일에는 저장할 수 없습니다.")
         messagebox.showerror(
             "덮어쓰기 오류",
             "원본 파일을 덮어쓸 수 없습니다.\n\n"
-            "병합된 파일은 다른 이름으로 저장해주세요."
+            "병합된 파일은 다른 이름이나 폴더에 저장해 주세요.",
+            parent=root,
         )
         return
-    # <<<--- 수정된 부분 끝 --->>>
+    # 수정 끝: 선택한 원본 파일 덮어쓰기 방지
 
-    merge_button.config(state=tk.DISABLED) # 병합 시작 및 저장 버튼 비활성화
-    select_button.config(state=tk.DISABLED) # 병합할 파일 추가 버튼 비활성화
-    delete_button.config(state=tk.DISABLED) # 선택 파일 삭제 버튼 비활성화
-    up_button.config(state=tk.DISABLED) # 위로 버튼 비활성화
-    down_button.config(state=tk.DISABLED) # 아래로 버튼 비활성화
+    set_buttons_state(tk.DISABLED) # 병합 작업 중 관련 버튼 비활성화
     
-    # 스레드에 merge_logic 파일의 함수를 연결하고, 인자를 전달
-    merge_thread = threading.Thread(
-        target=merge_logic.merge_excel_files, # target에 실행할 함수를 지정
-        args=(output_path, selected_files, gui_queue) # target에 지정한 함수의 매개 변수에 전달할 값 지정
-    )
-    # 데몬 스레드는 프로그램 종료 시 중단되므로 병합 중에는 on_close에서 창 닫기를 막음
-    merge_thread.daemon = True # True로 설정하면 메인 프로그램(프로세스)이 종료될 때 이 스레드는 자동으로 강제 종료 
-    merge_thread.start() 
+    # 추가 시작: 병합 스레드 생성·시작 실패 안내
+    try:
+        # 스레드에 merge_logic 파일의 함수를 연결하고, 인자를 전달
+        merge_thread = threading.Thread(
+            target=merge_logic.merge_excel_files, # target에 실행할 함수를 지정
+            # 변경 시작: 병합 스레드에 기존 파일 목록 전달
+            args=(output_path, selected_files, gui_queue) # target에 지정한 함수의 매개 변수에 전달할 값 지정
+            # 변경 끝: 병합 스레드에 기존 파일 목록 전달
+        )
+        # 데몬 스레드는 프로그램 종료 시 중단되므로 병합 중에는 on_close에서 창 닫기를 막음
+        merge_thread.daemon = True # True로 설정하면 메인 프로그램(프로세스)이 종료될 때 이 스레드는 자동으로 강제 종료
+        merge_thread.start()
+
+    except (RuntimeError, MemoryError):
+        messagebox.showerror(
+            "병합 시작 오류",
+            "병합 작업을 시작하지 못했습니다.\n\n"
+            "프로그램을 종료한 뒤 다시 실행해 주세요.",
+            parent=root,
+        )
+    # 추가 끝: 병합 스레드 생성·시작 실패 안내
 
 def GUI():
-    global root, file_listbox, log_area, merge_button, select_button, delete_button, up_button, down_button
+    global root, file_listbox, log_area, start_merge_button, select_button, delete_button, up_button, down_button
     global listbox_placeholder # 플레이스홀더 제어를 위해 전역 변수 추가
 
     # 기본 창 설정
     root = tk.Tk()
     root.protocol("WM_DELETE_WINDOW", on_close)
-    root.title("Excel 파일 병합 프로그램")
+    root.title("Excel 파일 표 병합 프로그램")
     root.geometry("700x550")
+
+    default_font = ("맑은 고딕", 9) # 공통 글꼴을 맑은 고딕, 크기를 9pt로 지정
     
     # --- 상단 프레임: 파일 선택 ---
     top_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
     top_frame.pack(padx=10, pady=10, fill=tk.X)
     
     button_frame = tk.Frame(top_frame)
-    button_frame.pack(side=tk.LEFT, padx=5, pady=5)
+    button_frame.pack(side=tk.LEFT, padx=5)
 
     # 이제 버튼들의 부모(master)를 top_frame이 아닌 button_frame으로 지정합니다.
     # pack() 옵션에서 side=tk.TOP을 사용하여 버튼들을 위에서 아래로 쌓습니다.
-    select_button = tk.Button(button_frame, text="병합할 파일 추가", width=15, command=select_files)
-    select_button.pack(side=tk.TOP, fill=tk.X, pady=(0, 5)) # fill=tk.X는 버튼 너비를 프레임에 맞추는 기능, pady는 버튼 사이 간격
+    select_button = tk.Button(button_frame, text="병합할 파일 추가", font=default_font, width=15, command=select_files) # 파일 추가 버튼에 공통 글꼴 적용
+    select_button.pack(side=tk.TOP, pady=(0, 5)) # pady는 버튼 사이 간격
 
-    delete_button = tk.Button(button_frame, text="선택 파일 삭제", width=15, command=delete_selected_file)
-    delete_button.pack(side=tk.TOP, fill=tk.X)
+    delete_button = tk.Button(button_frame, text="선택 파일 삭제", font=default_font, width=15, command=delete_selected_file) # 파일 삭제 버튼에 공통 글꼴 적용
+    delete_button.pack(side=tk.TOP)
     
     # 선택된 파일 목록을 보여줄 리스트박스
-    file_listbox = tk.Listbox(top_frame, height=5, bg="white")
+    file_listbox = tk.Listbox(top_frame, height=5, bg="white", font=default_font, selectmode=tk.EXTENDED) # 공통 글꼴 적용 및 다중 선택 허용
     file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5), pady=5)
 
     # --- 플레이스홀더 추가 시작 ---
     listbox_placeholder = tk.Label(
         file_listbox, # 리스트박스 내부에 배치
-        text="비밀번호가 걸린 파일은 병합이 정상적으로 진행되지 않습니다\n비밀번호가 걸려있는 경우 비밀번호를 해제한 후 병합을 진행해 주세요",
+        text="비밀번호가 걸린 파일은 병합이 정상적으로 진행되지 않습니다\n비밀번호가 걸려있는 경우 비밀번호를 해제한 후 병합을 진행해 주세요\n(마우스로 끌어서 놓기 미지원)",
+        font=default_font, # 목록이 비었을 때 표시하는 안내문에 공통 글꼴 적용
         fg="gray",
         bg="white"
     )
@@ -304,17 +351,21 @@ def GUI():
 
     # 사용자가 리스트박스에서 항목을 선택하고 키보드의 'Delete' 키를 누르면 delete_selected_file 함수가 호출됨
     file_listbox.bind("<Delete>", delete_selected_file) 
+    # 추가 시작: 파일 목록에 포커스가 있을 때 Ctrl+A 전체 선택
+    file_listbox.bind("<Control-a>", select_all_files)
+    file_listbox.bind("<Control-A>", select_all_files) # 대문자 A 입력도 처리
+    # 추가 끝: 파일 목록에 포커스가 있을 때 Ctrl+A 전체 선택
     
     # 순서 변경 버튼 프레임 및 버튼 생성
     reorder_frame = tk.Frame(top_frame)
-    reorder_frame.pack(side=tk.LEFT, padx=(0, 5), pady=5)
+    reorder_frame.pack(side=tk.LEFT, padx=(0, 5))
 
     # 업 버튼
-    up_button = tk.Button(reorder_frame, text="▲ 위로", width=8, command=move_file_up)
+    up_button = tk.Button(reorder_frame, text="▲ 위로", font=default_font, width=8, command=move_file_up) # 위로 이동 버튼에 공통 글꼴 적용
     up_button.pack(side=tk.TOP, padx=5, pady=(0, 5))
 
     # 다운 버튼
-    down_button = tk.Button(reorder_frame, text="▼ 아래로", width=8, command=move_file_down)
+    down_button = tk.Button(reorder_frame, text="▼ 아래로", font=default_font, width=8, command=move_file_down) # 아래로 이동 버튼에 공통 글꼴 적용
     down_button.pack(side=tk.TOP, padx=5)
 
     # 안내 메시지 프레임
@@ -322,33 +373,33 @@ def GUI():
     instruction_frame.pack(padx=10, pady=(0, 5), fill=tk.X)
 
     instruction_text = f"※ 안내: 병합할 엑셀 파일을 최대 {MAX_FILES}개까지 추가할 수 있으며, 목록의 순서대로 병합됩니다."
-    instruction_label = tk.Label(instruction_frame, text=instruction_text, fg="blue", anchor='w', justify=tk.LEFT)
+    instruction_label = tk.Label(instruction_frame, text=instruction_text, font=default_font, fg="blue", anchor='w') # 안내 문구에 공통 글꼴 적용
     instruction_label.pack(fill=tk.X)
     
     # 주의 메시지 프레임
     instruction_frame2 = tk.Frame(root)
     instruction_frame2.pack(padx=10, pady=(0, 5), fill=tk.X)
 
-    instruction_text2 = f"※ 주의: 병합할 엑셀 파일의 개수가 많거나 엑셀 파일 내의 내용이 많다면 소요 시간이 길어질 수 있습니다."
-    instruction_label2 = tk.Label(instruction_frame2, text=instruction_text2, fg="red", anchor='w', justify=tk.LEFT)
+    instruction_text2 = "※ 주의: 병합할 엑셀 파일의 개수가 많거나 엑셀 파일 내의 내용이 많다면 소요 시간이 길어질 수 있습니다."
+    instruction_label2 = tk.Label(instruction_frame2, text=instruction_text2, font=default_font, fg="red", anchor='w') # 주의 문구에 공통 글꼴 적용
     instruction_label2.pack(fill=tk.X)
 
     # --- 중간 프레임: 병합 실행 ---
     middle_frame = tk.Frame(root)
     middle_frame.pack(padx=10, pady=5, fill=tk.X)
     
-    merge_button = tk.Button(middle_frame, text="병합 시작 및 저장", font=("Arial", 10, "bold"), command=start_merge_thread)
-    merge_button.pack(fill=tk.X, ipady=5)
+    start_merge_button = tk.Button(middle_frame, text="병합 시작 및 저장", font=("Arial", 10, "bold"), command=start_merge_thread)
+    start_merge_button.pack(fill=tk.X, ipady=5)
 
     # --- 하단 프레임: 로그 표시 ---
     bottom_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
     bottom_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-    log_label = tk.Label(bottom_frame, text="진행 과정 로그")
+    log_label = tk.Label(bottom_frame, text="진행 과정 로그", font=default_font) # 로그 제목에 공통 글꼴 적용
     log_label.pack(anchor='w', padx=5)
 
     # 로그를 보여줄 스크롤 가능한 텍스트 영역
-    log_area = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, bg="white", state='disabled')
+    log_area = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, bg="white", state='disabled', font=("굴림체", 10)) # 로그 본문은 굴림체 10pt로 지정
     log_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
     
     root.after(100, process_queue) # GUI가 시작된 후 큐 확인 프로세스를 시작
