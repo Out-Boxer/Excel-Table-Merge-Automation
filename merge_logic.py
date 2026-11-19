@@ -1,5 +1,5 @@
 # merge_logic.py 
-# ver 1.0.3
+# ver 1.0.4
 
 import openpyxl
 from openpyxl.utils.cell import get_column_letter # 열 번호(1,2,3...)를 엑셀 열 문자('A','B',...)로 변환하는 함수를 가져옵니다
@@ -112,7 +112,7 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
                             
                             if cell.value is not None: # 셀에 실제 값이 있는 경우에만 값을 복사합니다.
                                 # .value를 붙여줘야 실제값을 읽어올 수 있다는 점은 주의할 것 / .value를 붙이지 않으면 각 Cell 위치에 대한 정보값을 튜플로 읽어오기
-                                target_cell.value = cell.value 
+                                target_cell.value = cell.value
                             
                             # 원본 서식을 유지하며 셀 단위로 복사
                             if cell.has_style: # .has_style → 서식이 적용되어 있는지 여부
@@ -151,15 +151,15 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
                         shifted_range.shift(row_shift=offset_row, col_shift=0) # 병합 범위를 현재 붙여넣기 위치에 맞게 아래로 이동
                         target_sheet.merge_cells(shifted_range.coord) # 대상 시트에 셀 병합을 적용 (merge_cells 병합 기능을 가진 함수)
 
-                    # 열 너비 복사 (원본 코드의 개선된 로직 유지)
+                    # 원본에 개별 지정된 열 너비 중 가장 넓은 값을 유지
                     for col in range(1, current_sheet.max_column + 1):
                         col_letter = get_column_letter(col)
-                        new_width = current_sheet.column_dimensions[col_letter].width
-                        current_width = target_sheet.column_dimensions[col_letter].width
-                        
-                        if new_width is not None:
-                            if current_width is None or new_width > current_width:
-                                    target_sheet.column_dimensions[col_letter].width = new_width # column_dimensions은 열의 넓이를 지정하는 함수
+                        source_dim = current_sheet.column_dimensions.get(col_letter)
+                        if source_dim is None:
+                            continue
+                        target_dim = target_sheet.column_dimensions.get(col_letter)
+                        if target_dim is None or source_dim.width > target_dim.width:
+                            target_sheet.column_dimensions[col_letter].width = source_dim.width
 
                     sheet_next_row[sheet_key] += current_sheet.max_row # 이번 원본 시트의 행 수만큼 다음 붙여넣기 행을 뒤로 이동
             
@@ -184,6 +184,9 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
 
         is_saving = True
         new_wb.save(output_path)
+        # 추가 시작: 저장에 성공한 경로만 GUI에 전달
+        gui_queue.put(('saved_path', os.path.abspath(output_path)))
+        # 추가 끝: 저장에 성공한 경로만 GUI에 전달
         gui_queue.put(('log', "\n" + "="*50))
         gui_queue.put(('log', f"성공! 모든 파일이 '{os.path.basename(output_path)}'으로 병합되었습니다."))
         gui_queue.put(('show_info', ("성공", "파일 병합이 완료되었습니다!")))
@@ -255,7 +258,7 @@ def merge_excel_files(output_path, selected_files, gui_queue): # 인자로 필�
             new_wb.close()
             del new_wb
 
-        gc.collect()
+        gc.collect() # 명시적으로 가비지 컬렉션 호출하여 작업이 끝난 파일 메모리에서 정리
         gc.enable() # 자동 가비지 컬렉션 활성화
         gui_queue.put(('task_done', None))
 
