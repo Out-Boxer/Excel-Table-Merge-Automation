@@ -1,9 +1,11 @@
 # GUI.py
-# ver 1.0.3
+# ver 1.0.4
 
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox
 import os
+import sys
+import subprocess
 import threading
 import queue # 안전한 스레드를 위해 큐 사용(get은 값을 가져오는 함수 / put은 큐에 데이터를 집어넣는 함수)
 import merge_logic  # 분리한 엑셀 병합 로직 파일
@@ -25,11 +27,27 @@ GUI 프로그램에서 blocking이 왜 치명적인가
 """
 
 def set_buttons_state(button_state): # 적용할 상태(tk.NORMAL: 활성화, tk.DISABLED: 비활성화)를 전달받는 함수 / 병합 작업과 관련된 버튼들의 상태를 함께 변경
-    start_merge_button.config(state=button_state) # 병합 시작 버튼 상태 변경
+    start_merge_button.config(state=button_state if selected_files else tk.DISABLED) # 파일이 있을 때만 활성화 가능
     select_button.config(state=button_state) # 파일 추가 버튼 상태 변경
     delete_button.config(state=button_state) # 선택 파일 삭제 버튼 상태 변경
     up_button.config(state=button_state) # 위로 이동 버튼 상태 변경
     down_button.config(state=button_state) # 아래로 이동 버튼 상태 변경
+
+
+# 추가 시작: 마지막으로 저장한 결과의 폴더 열기
+def open_saved_folder():
+    folder_path = os.path.dirname(saved_path.get())
+    try:
+        if not os.path.isdir(folder_path):
+            raise FileNotFoundError(folder_path)
+        if sys.platform == "win32":
+            os.startfile(folder_path)
+        else:
+            command = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([command, folder_path])
+    except OSError:
+        messagebox.showerror("폴더 열기 오류", f"저장 폴더를 열 수 없습니다. 경로를 확인해 주세요.\n\n{folder_path}", parent=root)
+# 추가 끝: 마지막으로 저장한 결과의 폴더 열기
 
 
 def process_queue(): 
@@ -56,6 +74,11 @@ def process_queue():
             elif command == 'show_info':
                 title, msg = data
                 messagebox.showinfo(title, msg)
+            # 추가 시작: 저장 성공 시 경로 표시 및 폴더 열기 활성화
+            elif command == 'saved_path':
+                saved_path.set(data)
+                open_folder_button.config(state=tk.NORMAL)
+            # 추가 끝: 저장 성공 시 경로 표시 및 폴더 열기 활성화
             elif command == 'task_done':
                 set_buttons_state(tk.NORMAL)
 
@@ -179,6 +202,7 @@ def move_file_down(): # 선택한 파일을 목록에서 한 칸 아래로 이�
         update_file_listbox(select_index=new_index) 
 
 def update_file_listbox(select_index=None): 
+    start_merge_button.config(state=tk.NORMAL if selected_files else tk.DISABLED) # 파일 개수에 맞춰 병합 버튼 상태 갱신
    # tk.END는 Listbox에서 항목들 중 가장 마지막 항목을 가리키는 tkinter 상수
     file_listbox.delete(0, tk.END) # 리스트박스의 모든 내용을 지움 / delete(start_idx, end_idx) start_idx 부터 end_idx 까지 항목 삭제(end_idx 포함)
 
@@ -228,15 +252,11 @@ def on_close():
 
 def start_merge_thread(): # 메인 병합 함수
     global merge_thread
-    # 파일 저장 경로를 먼저 묻고, 정해지면 스레드를 시작
-
-    # 작업 시작 전 파일 목록 유효성 검사
-    if not selected_files: # 파일이 하나도 선택되지 않았다면
-        messagebox.showerror("오류", "병합할 엑셀 파일을 먼저 선택해주세요.")
-        return
-    elif len(selected_files) < 2: # 2개 미만이면 병합할 의미가 없으므로 오류와 함께 종료
+    if len(selected_files) < 2: # 파일이 2개 미만(1개라면)이면 안내 후 종료
         messagebox.showerror("오류", "병합하려면 최소 2개 이상의 파일을 선택해야 합니다.")
         return
+
+    # 파일 저장 경로를 먼저 묻고, 정해지면 스레드를 시작
 
     output_path = filedialog.asksaveasfilename(
         defaultextension=".xlsx",
@@ -291,10 +311,11 @@ def start_merge_thread(): # 메인 병합 함수
         merge_thread.start()
 
     except (RuntimeError, MemoryError):
+        set_buttons_state(tk.NORMAL)
         messagebox.showerror(
             "병합 시작 오류",
             "병합 작업을 시작하지 못했습니다.\n\n"
-            "프로그램을 종료한 뒤 다시 실행해 주세요.",
+            "다시 시도해 주세요.",
             parent=root,
         )
     # 추가 끝: 병합 스레드 생성·시작 실패 안내
@@ -302,6 +323,7 @@ def start_merge_thread(): # 메인 병합 함수
 def GUI():
     global root, file_listbox, log_area, start_merge_button, select_button, delete_button, up_button, down_button
     global listbox_placeholder # 플레이스홀더 제어를 위해 전역 변수 추가
+    global saved_path, open_folder_button # 저장 완료 시 경로와 버튼 상태 갱신에 사용
 
     # 기본 창 설정
     root = tk.Tk()
@@ -315,16 +337,15 @@ def GUI():
     top_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
     top_frame.pack(padx=10, pady=10, fill=tk.X)
     
-    button_frame = tk.Frame(top_frame)
-    button_frame.pack(side=tk.LEFT, padx=5)
+    file_action_frame = tk.Frame(top_frame)
+    file_action_frame.pack(side=tk.LEFT, padx=5)
 
-    # 이제 버튼들의 부모(master)를 top_frame이 아닌 button_frame으로 지정합니다.
-    # pack() 옵션에서 side=tk.TOP을 사용하여 버튼들을 위에서 아래로 쌓습니다.
-    select_button = tk.Button(button_frame, text="병합할 파일 추가", font=default_font, width=15, command=select_files) # 파일 추가 버튼에 공통 글꼴 적용
-    select_button.pack(side=tk.TOP, pady=(0, 5)) # pady는 버튼 사이 간격
+    # 이제 버튼들의 부모(master)를 top_frame이 아닌 file_action_frame으로 지정
+    select_button = tk.Button(file_action_frame, text="병합할 파일 추가", font=default_font, width=15, command=select_files) # 파일 추가 버튼에 공통 글꼴 적용
+    select_button.pack(side=tk.TOP, pady=(0, 5)) # pady는 버튼 사이 간격 / pack() 옵션에서 side=tk.TOP을 사용하여 버튼들을 위에서 아래 순으로 배치
 
-    delete_button = tk.Button(button_frame, text="선택 파일 삭제", font=default_font, width=15, command=delete_selected_file) # 파일 삭제 버튼에 공통 글꼴 적용
-    delete_button.pack(side=tk.TOP)
+    delete_button = tk.Button(file_action_frame, text="선택 파일 삭제", font=default_font, width=15, command=delete_selected_file) # 파일 삭제 버튼에 공통 글꼴 적용
+    delete_button.pack(side=tk.TOP) # pack() 옵션에서 side=tk.TOP을 사용하여 버튼들을 위에서 아래 순으로 배치
     
     # 선택된 파일 목록을 보여줄 리스트박스
     file_listbox = tk.Listbox(top_frame, height=5, bg="white", font=default_font, selectmode=tk.EXTENDED) # 공통 글꼴 적용 및 다중 선택 허용
@@ -342,13 +363,14 @@ def GUI():
     listbox_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
     # --- 플레이스홀더 추가 끝 ---
 
-    # 사용자가 리스트박스에서 항목을 선택하고 키보드의 'Delete' 키를 누르면 delete_selected_file 함수가 호출됨
-    file_listbox.bind("<Delete>", delete_selected_file) 
-    # 추가 시작: 파일 목록에 포커스가 있을 때 Ctrl+A 전체 선택
-    file_listbox.bind("<Control-a>", select_all_files)
-    file_listbox.bind("<Control-A>", select_all_files) # 대문자 A 입력도 처리
-    # 추가 끝: 파일 목록에 포커스가 있을 때 Ctrl+A 전체 선택
     
+    file_listbox.bind("<Delete>", delete_selected_file) # 리스트박스에서 항목을 선택하고 'Delete' 키를 누르면 delete_selected_file 함수가 호출됨
+    
+    # 파일 목록에 포커스가 있을 때 Ctrl+A 누르면 전체 선택
+    # Tkinter는 소문자 a와 대문자 A의 입력을 구분하기 때문에 대소문자 모두 바인딩 처리
+    file_listbox.bind("<Control-a>", select_all_files)
+    file_listbox.bind("<Control-A>", select_all_files)
+
     # 순서 변경 버튼 프레임 및 버튼 생성
     reorder_frame = tk.Frame(top_frame)
     reorder_frame.pack(side=tk.LEFT, padx=(0, 5))
@@ -381,18 +403,26 @@ def GUI():
     middle_frame = tk.Frame(root)
     middle_frame.pack(padx=10, pady=5, fill=tk.X)
     
-    start_merge_button = tk.Button(middle_frame, text="병합 시작 및 저장", font=("Arial", 10, "bold"), command=start_merge_thread)
+    start_merge_button = tk.Button(middle_frame, text="병합 시작 및 저장", font=("Arial", 10, "bold"), command=start_merge_thread, state=tk.DISABLED)
     start_merge_button.pack(fill=tk.X, ipady=5)
 
     # --- 하단 프레임: 로그 표시 ---
     bottom_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
     bottom_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-    log_label = tk.Label(bottom_frame, text="진행 과정 로그", font=default_font) # 로그 제목에 공통 글꼴 적용
-    log_label.pack(anchor='w', padx=5)
+    # 변경 시작: 로그 제목과 저장 폴더 열기 버튼을 같은 줄에 배치
+    log_header_frame = tk.Frame(bottom_frame)
+    log_header_frame.pack(fill=tk.X, padx=5, pady=(5, 0))
+    log_label = tk.Label(log_header_frame, text="진행 과정 로그", font=default_font)
+    log_label.pack(side=tk.LEFT)
+    saved_path = tk.StringVar(master=root) # 화면에 표시하지 않고 마지막 저장 경로를 보관
+    open_folder_button = tk.Button(log_header_frame, text="저장 폴더 열기", font=default_font, command=open_saved_folder, state=tk.DISABLED)
+    open_folder_button.pack(side=tk.RIGHT)
+    # 변경 끝: 로그 제목과 저장 폴더 열기 버튼을 같은 줄에 배치
 
     # 로그를 보여줄 스크롤 가능한 텍스트 영역
     log_area = scrolledtext.ScrolledText(bottom_frame, wrap=tk.WORD, bg="white", state='disabled', font=("굴림체", 10)) # 로그 본문은 굴림체 10pt로 지정
+    log_area.vbar.pack_forget()
     log_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
     
     root.after(100, process_queue) # GUI가 시작된 후 큐 확인 프로세스를 시작
